@@ -130,6 +130,7 @@ class TabICLClassifier(BaseClassifier):
         "capability:missing_values": True,
         "capability:predict_proba": True,
         "capability:unequal_length": False,
+        "capability:random_state": True,
         # testing flags
         # -------------
         "tests:vm": True,

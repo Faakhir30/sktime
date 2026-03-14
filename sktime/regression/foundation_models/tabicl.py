@@ -107,6 +107,7 @@ class TabICLRegressor(BaseRegressor):
         "capability:missing_values": True,
         "capability:unequal_length": False,
         "capability:multithreading": False,
+        "capability:random_state": True,
         # testing flags
         # -------------
         "tests:vm": True,

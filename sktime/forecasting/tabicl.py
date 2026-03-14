@@ -133,6 +133,7 @@ class TabICLForecaster(BaseForecaster):
         "capability:pred_int": False,
         "capability:insample": False,
         "capability:pred_int:insample": False,
+        "capability:random_state": True,
         # testing flags
         # -------------
         "tests:vm": True,
