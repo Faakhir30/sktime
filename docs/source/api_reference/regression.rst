@@ -77,6 +77,18 @@ Deep learning
     rnn.SimpleRNNRegressorTorch
     tapnet.TapNetRegressor
 
+Foundation models
+-----------------
+
+.. currentmodule:: sktime.regression.foundation_models
+
+.. autosummary::
+    :recursive:
+    :toctree: auto_generated/
+    :template: class.rst
+
+    TabICLRegressor
+
 Distance-based
 --------------
 

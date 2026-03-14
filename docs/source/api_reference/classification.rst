@@ -96,6 +96,7 @@ Foundation models
     :template: class.rst
 
     MomentFMClassifier
+    TabICLClassifier
 
 
 Dictionary-based
