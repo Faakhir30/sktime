@@ -100,6 +100,8 @@ class BaggingForecaster(BaseForecaster):
         "capability:pred_int:insample": True,  # ... for in-sample horizons?
         "capability:random_state": True,
         "property:randomness": "derandomized",
+        # _predict_proba uses skpro.distributions.Empirical
+        "python_dependencies": "skpro",
     }
 
     def __init__(
@@ -121,12 +123,12 @@ class BaggingForecaster(BaseForecaster):
 
         This method should be used for setting dynamic tags only.
         """
+        deps = ["skpro"]
         if self.bootstrap_transformer is None:
             # if the transformer is None, this uses the statsmodels dependent
             # sktime.transformations.bootstrap.STLBootstrapTransformer
-            #
-            # done before the super call to trigger exceptions
-            self.set_tags(**{"python_dependencies": "statsmodels"})
+            deps.append("statsmodels")
+        self.set_tags(**{"python_dependencies": deps})
 
         # set the tags based on forecaster
         tags_to_clone = [
