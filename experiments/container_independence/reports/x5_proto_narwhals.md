@@ -329,4 +329,7 @@ pre-edit LOC (376/199).
 * Only pd2 for benchmarks. Correctness was checked on pd2 and pd3.
 * The forecaster fh is integer out-of-sample only (no in-sample fh, no prediction intervals, no update).
 * `fast_pandas` slice path: wrong index name for `None` level names (prototype gap).
-* The pyarrow `over` bug threshold (~500 groups) is nondeterministic (8/10 trials at 500).
+* The pyarrow `over` bug threshold (~500 groups) is nondeterministic. First run: 8/10 trials at 500 groups. Confirmation re-run
+  (same command, final pass): 0/10 at 10, 100 and 300 groups; 6/10 at 500 (60% rows wrong); 8/10 at 1000 (54%); 10/10 at 10000 (83%).
+  The workaround was 0/10 wrong at every size. The re-run of `x5_test_narwhals.py` (pd2) again gave 17/17 A-cases passing,
+  with `fast_slices_equal=False` only for `panel_none_names|cols=False`.
