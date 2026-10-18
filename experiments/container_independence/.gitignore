@@ -1,0 +1,3 @@
+__pycache__/
+results/*.parquet
+results/x4_forecaster_ext_dev*.log
