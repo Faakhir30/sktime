@@ -17,6 +17,10 @@ export const meta = {
 const SP = args.sp
 const WT = args.wt
 const COMPLETED = (args && args.completed) || {}
+// keys whose reports/<key>.md is already finished: only extract the structured result (cheap)
+const REPORTED = new Set((args && args.reported) || [])
+// cap verifier lenses per workstream (small machines run few agents at once)
+const MAX_LENSES = (args && args.maxLenses) || 2
 const ED = WT + '/experiments/container_independence'
 
 const CTX = `
@@ -46,7 +50,7 @@ Experiments area: ED=${ED} with common.py (make_panel, make_panel_fast, to_polar
 Rules:
  - Do NOT modify files under WT/sktime/ (prototypes go in ED/protos/). No git commands that change state (no commit/checkout/stash/reset/add).
  - Prefix every file you create with your workstream key (e.g. scripts/x3_*.py, results/x3_*.json, reports/x3_*.md) — ~16 agents run in parallel.
- - Machine: 16 cores, ~6GB free RAM shared by ~14 concurrent agents. Keep each python process under ~450MB peak RSS; use DEV_GRID-scale sizes. Large runs happen later in a dedicated serial benchmark phase — make your benchmark scripts accept a --grid {dev,large} CLI flag so they can be re-run at scale. Timing under concurrent load is noisy: prefer RELATIVE comparisons measured within the same process (interleaved, min-of-repeats via bench()), and report ratios alongside absolute numbers.
+ - Machine (cloud rerun): 4 cores, ~15GB RAM, ~2 concurrent agents. Keep each python process under ~1.5GB peak RSS; use DEV_GRID-scale sizes. Raw outputs in results/ from the earlier (local) run were NOT carried over — re-run scripts to regenerate any numbers you cite. Large runs happen later in a dedicated serial benchmark phase — make your benchmark scripts accept a --grid {dev,large} CLI flag so they can be re-run at scale. Timing under concurrent load is noisy: prefer RELATIVE comparisons measured within the same process (interleaved, min-of-repeats via bench()), and report ratios alongside absolute numbers.
  - Every quantitative claim must come from a script you ran; record the exact command and the output in your report. Label anything not measured as "unmeasured/expected".
  - An earlier run was interrupted. If files with your key prefix already exist (reports/<key>.md, scripts/<key>_*, protos/<key>_*, results/<key>_*), review and reuse them — re-run to confirm numbers — instead of starting over; finish what is incomplete.
  - Write a detailed markdown report to reports/<key>.md (methods, commands, raw numbers, conclusions, caveats). Your final structured answer summarizes it; claim ids should be "<key>.<n>".
@@ -213,10 +217,18 @@ const results = await pipeline(
   WS,
   (ws) => COMPLETED[ws.key]
     ? Promise.resolve(COMPLETED[ws.key])
-    : agent(CTX + '\n' + ws.prompt, { label: ws.key, phase: ws.phase, schema: RESULT }),
+    : REPORTED.has(ws.key)
+      ? agent(`${CTX}
+${ws.prompt}
+
+The detailed report ${ED}/reports/${ws.key}.md for this workstream is ALREADY WRITTEN by an earlier run. Do not redo the workstream.
+Read the report and produce the structured result from it (claims with evidence, impact statements, caveats, open questions; report_path = that file).
+Re-run at most the 2-3 scripts behind the headline quantitative claims to confirm the numbers still hold on this machine; if a number changes materially, update the report (append a short "Cloud re-run" section) and use the new number.`,
+        { label: ws.key, phase: ws.phase, schema: RESULT, effort: 'medium' })
+      : agent(CTX + '\n' + ws.prompt, { label: ws.key, phase: ws.phase, schema: RESULT }),
   (res, ws) => {
     if (!res) return { ws: ws.key, res: null, verdicts: [] }
-    return parallel(ws.lenses.map((lens, i) => () => agent(`${CTX}
+    return parallel(ws.lenses.slice(0, MAX_LENSES).map((lens, i) => () => agent(`${CTX}
 You are an ADVERSARIAL VERIFIER for workstream "${ws.key}". The original task was:
 ${ws.prompt}
 
