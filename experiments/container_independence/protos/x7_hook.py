@@ -152,8 +152,11 @@ class PanelNativeMixin:
     def fit(self, y, X=None, fh=None):
         pf = self._panel_route(y, X)
         if pf is None:
+            # BaseForecaster.fit calls reset(), which wipes private attributes,
+            # so the routing flag must be set AFTER the stock fit.
+            super().fit(y, X=X, fh=fh)
             self._panel_native = False
-            return super().fit(y, X=X, fh=fh)
+            return self
 
         if not self._state == "pretrained":
             self._reset_at("pretrained")
@@ -191,8 +194,10 @@ class PanelNativeMixin:
     def _materialize(self):
         if getattr(self, "_panel_native", False):
             fh = self._fh
+            y = self._panel_y
+            super().fit(y, fh=fh)  # resets private attrs (refit)
             self._panel_native = False
-            super().fit(self._panel_y, fh=fh)
+            self._panel_materialized = True
 
     def predict_interval(self, fh=None, X=None, coverage=0.90):
         self._materialize()

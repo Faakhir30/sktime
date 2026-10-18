@@ -23,6 +23,8 @@ Variants
   B4_pyarrow_dataset     : ds.dataset().to_table(columns, filter)
   B5_lazy_then_sktime    : B2 -> sktime convert_to(pd-multiindex)   (a lazy-aware
                            boundary: push selection into the scan, convert the slice)
+  B1c / B5b              : B1 / B5 but with the raw adapter convert_polars_to_pandas
+                           instead of convert_to (isolates the mtype-check cost)
 
 Time = min of repeats (interleaved rounds, same process); peak RSS delta = fresh
 subprocess per variant (result kept alive). Threads pinned to 4 for polars, duckdb
@@ -209,7 +211,7 @@ def B4_pyarrow_dataset(ids, cut):
 
     dset = ds.dataset(DATA, format="parquet")
     filt = pc.field("series_id").isin(pa.array(ids)) & (
-        pc.field("time") >= pa.scalar(cut.to_datetime64(), type=pa.timestamp("ns"))
+        pc.field("time") >= pa.scalar(cut.as_unit("ns").to_datetime64(), type=pa.timestamp("ns"))
     )
     return dset.to_table(columns=["series_id", "time", "y"], filter=filt)
 
@@ -220,16 +222,33 @@ def B5_lazy_then_sktime(ids, cut):
     return convert_to(_to_sktime_pl(_lazy_query(ids, cut).collect()), "pd-multiindex")
 
 
+def B1c_eager_all_adapter(ids, cut):
+    """B1 with sktime's raw polars->pandas adapter (no mtype check / monotonic loop)."""
+    from sktime.datatypes._adapter.polars import convert_polars_to_pandas
+
+    y = convert_polars_to_pandas(_to_sktime_pl(pl.read_parquet(DATA)))
+    return _pandas_select(y, ids)
+
+
+def B5b_lazy_then_adapter(ids, cut):
+    """B5 with the raw adapter instead of convert_to (no mtype check)."""
+    from sktime.datatypes._adapter.polars import convert_polars_to_pandas
+
+    return convert_polars_to_pandas(_to_sktime_pl(_lazy_query(ids, cut).collect()))
+
+
 VARIANTS = {
     "B0_pandas_read_all": B0_pandas_read_all,
     "B1_sktime_eager_all": B1_sktime_eager_all,
     "B1b_eager_then_filter": B1b_eager_then_filter,
+    "B1c_eager_all_adapter": B1c_eager_all_adapter,
     "B2_polars_lazy": B2_polars_lazy,
     "B2w_polars_lazy_window": B2w_polars_lazy_window,
     "B3_duckdb": B3_duckdb,
     "B3w_duckdb_window": B3w_duckdb_window,
     "B4_pyarrow_dataset": B4_pyarrow_dataset,
     "B5_lazy_then_sktime": B5_lazy_then_sktime,
+    "B5b_lazy_then_adapter": B5b_lazy_then_adapter,
 }
 
 

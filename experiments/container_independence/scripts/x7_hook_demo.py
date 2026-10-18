@@ -139,11 +139,13 @@ def checks():
     proj = [ln.strip() for ln in plan.splitlines() if "PROJECT" in ln or "project" in ln]
     rec("polars_lazy_projection_pushdown", len(proj) > 0, " | ".join(proj)[:200])
     # stock sktime on a LazyFrame panel
+    # (informational: stock sktime has no lazy Panel mtype -> expected to raise;
+    #  "ok" here means "observed behaviour as expected", i.e. it raised)
     try:
         NaiveForecaster().fit(lf, fh=FH).predict()
-        rec("stock_sktime_accepts_lazy_panel", True, "")
+        rec("info_stock_sktime_rejects_lazy_panel", False, "stock accepted it")
     except Exception as e:  # noqa: BLE001
-        rec("stock_sktime_accepts_lazy_panel", False, repr(e)[:200])
+        rec("info_stock_sktime_rejects_lazy_panel", True, repr(e)[:160])
     # 10 fallback: strategy not supported natively -> loop, identical
     f = NaivePanelNative(strategy="mean", window_length=10).fit(y, fh=FH)
     rec("fallback_mean_equal", *pd_equal(
