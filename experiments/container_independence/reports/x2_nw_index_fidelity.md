@@ -16,7 +16,7 @@ The claim being tested (C2):
 |---|---|---|
 | (a) "Narwhals dataframes are columns only / no MultiIndex" | **True for the narwhals API. Wrong if read as "narwhals destroys the index".** | Index levels are not in `.columns` or `.schema`, and `nw.col("h0")` raises `ColumnNotFoundError`. But `nw.from_native(MI frame)` accepts the frame silently (no warning). Of 37 ops probed, 27 return the original MultiIndex, still aligned to the rows, on both pd2 and pd3. These are all the row-preserving or row-subsetting ones, 5 of them Series ops. Of the other 10, 8 change the index (aggregation, join, unpivot, `maybe_reset_index`/`maybe_set_index`, `group_by` when index names overlap columns) and 2 raise. Ops 1 |
 | (b) "would have to `reset_index` before grouping" | **True for portable code.** | On the pandas backend `group_by("h0")` and `sort("h0")` silently resolve index level names. This is a pandas leak: the same call on a polars backend raises `ColumnNotFoundError`. Code that relies on it is not portable. Ops 1 |
-| (c) "That is a copy" | **pd2 default: true. pd3 / CoW: false for the data. Either way it is small next to the iteration.** | pd2: data columns copied (`np.shares_memory` False). 500k rows x 10 cols: 65.8 MB traced peak for 38.1 MB of data. pd3 and pd2+CoW: data columns shared (True), and the allocation does not depend on n_cols (pd3: 11.9 MB traced + 7.7 MB arrow at 500k rows). `reset_index` costs 0.49 to 4.7% of one `VectorizedDF.items()` pass at 100k rows or more. Cost 2 |
+| (c) "That is a copy" | **pd2 default: true. pd3 / CoW: false for the data. Either way it is small next to the iteration.** | pd2: data columns copied (`np.shares_memory` False). 500k rows x 10 cols: 65.8 MB traced peak for 38.1 MB of data. pd3 and pd2+CoW: data columns shared (True), and the allocation does not depend on n_cols (pd3: 11.9 MB traced + 7.7 MB arrow at 500k rows). `reset_index` costs 0.49 to 4.7% of one `VectorizedDF.items()` pass at 100k rows or more (cloud re-run: 0.7 to 8.2%; reset+set 1.9 to 18%, §8). Cost 2 |
 | (d) "the index that came back was a RangeIndex, level names gone" | **Reproduced, but only through specific paths, none of them required.** | (i) `nw.maybe_reset_index` is `reset_index(drop=True)`: you get a RangeIndex and the level *values* are dropped too. (ii) `group_by().agg`, `join` and `unpivot` return a RangeIndex by design. (iii) If the index names equal column names, narwhals' pandas `group_by` calls `reset_index(drop=True)` internally. (iv) `reset_index()` -> ops -> `to_native()` with no `set_index`. `reset_index()` -> nw ops -> `set_index(names)` restored names, order and dtypes in 9/9 cases on pd2 and pd3. Fidelity 3 |
 | (e) "current code groups with groupby(level=...) and keeps those names" | **True but incomplete.** | It groups by level *positions*. The final names are re-applied from the stored schema (`reconstruct`: `X_mi_index.set_names(self.X_mi_index_names)`), which is the same mechanism the narwhals recipe needs. The current code also does **not** keep `freq` through `groupby` on `from_tuples` MultiIndexes. It re-infers it for every slice, which makes `items()` 3.0 to 5.4x slower on pd2. On pd3 the re-inference also **mutates the caller's frame**. Freq 5 |
 
@@ -171,7 +171,25 @@ PYTHONPATH=.:experiments/container_independence $EXP_PY  -W ignore experiments/c
 PYTHONPATH=.:experiments/container_independence $EXP_PY3 -W ignore experiments/container_independence/scripts/x2_nw_groupby_iter_bench.py --grid dev
 ```
 
-BENCH_TABLE_PLACEHOLDER
+Methods (see the script docstring): `pd_level` = `groupby(level=0, sort=False)` + droplevel; `sk_items` = current `VectorizedDF.items`; `pd_col` = pandas groupby on the reset (flat) frame; `nw_pd` = narwhals `group_by("h0")` iteration on the flat pandas frame (`nw_pd_native` + `to_native`); `nw_pd_recipe[_infer|_ctor]` = reset_index -> nw group_by -> rebuild time-indexed pandas slice (schema freq / per-slice infer_freq / direct DatetimeIndex ctor); `nw_pd_recipe_fast` = `protos/x2_index_recipe.iter_slices`; `nw_offsets_iloc` = narwhals computes group boundaries only, slices are `iloc` on the original MI frame; `pl_iter_mo` / `pl_partition` = polars `group_by(maintain_order=True)` / `partition_by(maintain_order=True)`; `nw_pl` = narwhals `group_by` on a polars frame. Cloud re-run (4 cores), n_cols=1, ms, min of repeats:
+
+| pandas | size | pd_level | sk_items | pd_col | nw_pd | nw_pd_recipe | nw_pd_recipe_fast | nw_offsets_iloc | pl_iter_mo | pl_partition | nw_pl |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2.3.3 | 10x100 | 2.09 | 2.14 | 1.35 | 1.27 | 9.78 | 4.77 | 4.47 | 1.22 | 0.93 | 1.54 |
+| 2.3.3 | 100x100 | 12.20 | 11.07 | 4.25 | 4.32 | 80.33 | 24.45 | 13.71 | 5.98 | 3.27 | 5.75 |
+| 2.3.3 | 1000x100 | 100.66 | 104.28 | 31.52 | 33.48 | 753.58 | 210.41 | 110.41 | 37.99 | 23.78 | 29.23 |
+| 2.3.3 | 10000x50 | 1328.38 | 1175.82 | 493.02 | 518.42 | 9331.30 | 2672.75 | 1522.97 | 361.45 | 241.72 | 456.24 |
+| 3.0.6 | 10x100 | 3.03 | 2.92 | 1.43 | 2.02 | 17.77 | 8.10 | 7.78 | 1.39 | 0.86 | 1.61 |
+| 3.0.6 | 100x100 | 12.19 | 13.30 | 4.17 | 7.08 | 142.07 | 46.88 | 17.84 | 3.00 | 3.08 | 5.40 |
+| 3.0.6 | 1000x100 | 136.09 | 125.39 | 38.74 | 77.96 | 1566.07 | 416.63 | 131.55 | 23.45 | 24.57 | 35.12 |
+| 3.0.6 | 10000x50 | 1535.22 | 1767.42 | 694.30 | 1151.61 | 17424.86 | 5413.41 | 1798.50 | 451.10 | 213.96 | 488.48 |
+
+Key ratios (from 100 series up):
+
+- **Raw narwhals iteration is cheap**: `nw_pd/pd_col` = 1.02-1.06 (pd2), 1.66-2.01 (pd3); `nw_pd/pd_level` = 0.33-0.39 (pd2), 0.57-0.75 (pd3). Grouping a flat frame by a column is *faster* than `groupby(level=...)` + droplevel.
+- **The cost is rebuilding time-indexed pandas slices**: naive recipe (`drop` + `set_index` + freq) is 7.2-7.9x `sk_items` (pd2), 9.9-12.5x (pd3). Per-column numpy ctor + global-grid freq (`nw_pd_recipe_fast`) cuts this to 2.0-2.3x (pd2), 3.1-3.5x (pd3). Using narwhals only for boundaries and `iloc` on the original MI frame (`nw_offsets_iloc`) is 1.02-1.34x `sk_items` (parity at >=1000 series).
+- **Polars**: `partition_by(maintain_order=True)` is 0.18-0.27x (pd2 run) / 0.14-0.25x (pd3 run) of `pd_level`.
+- **Order**: all pandas-backed methods (incl. narwhals) yield groups in first-appearance order (= `sort=False`); keys are 1-tuples `('s0',)` in narwhals vs scalars in pandas. **`nw_pl` (narwhals on polars) order is neither first-appearance nor stable over 5 runs** — narwhals' `group_by` iteration does not request `maintain_order`, so R5 (iterate in schema order) is required.
 
 ## 5. freq and Period (sub-question 5, plus a side finding)
 
@@ -273,3 +291,27 @@ Rules:
 - narwhals 2.27.1 and polars 2.0.0 only. Polars' Period extension-type round trip and narwhals' internal `reset_index(drop=True)` on name overlap may differ in other versions.
 - The recipe prototype is not wired into sktime. Plugging it into `VectorizedDF`/`BaseForecaster` is a separate workstream.
 - `iter_slices` builds per-slice pandas objects. It does **not** show what a natively polars-consuming forecaster would cost. On polars, `partition_by(maintain_order=True)` is 0.15 to 0.2x of `pd_level` (see §4).
+
+## 8. Cloud re-run (2026-10-18, 4 cores, ~2 concurrent agents)
+
+Re-ran the three headline scripts with the commands in §2, §4 and §6 (both EXP_PY and EXP_PY3).
+
+- `x2_recipe_fidelity.py`: unchanged. 18 combinations x 11 checks = 198/198 True, 0 False, on both pd2 and pd3.
+- `x2_nw_groupby_iter_bench.py --grid dev`: this run produced the §4 table. In the earlier run that section was a placeholder.
+- `x2_reset_index_cost.py --grid dev` (pd2 default and pd3):
+  - Memory is identical to §2. pd2 is not shared: 65.8 MB traced at 500k x 10 and 31.5 MB at 500k x 1. pd3 is shared: 11.9 MB traced + 7.7 MB arrow, regardless of n_cols.
+  - The ratios moved a little:
+
+| config | rows x cols | reset ms | set ms | itSk ms | reset/itSk | (reset+set)/itSk |
+|---|---|---|---|---|---|---|
+| pd2 | 100k x 1 | 4.96 | 10.31 | 104.99 | 4.7% | 14.5% |
+| pd2 | 100k x 10 | 8.80 | 10.47 | 107.11 | 8.2% | 18.0% |
+| pd2 | 500k x 1 | 18.25 | 57.35 | 1397.15 | 1.3% | 5.4% |
+| pd2 | 500k x 10 | 53.68 | 54.04 | 1308.03 | 4.1% | 8.2% |
+| pd3 | 100k x 1 | 3.33 | 6.61 | 124.97 | 2.7% | 8.0% |
+| pd3 | 100k x 10 | 3.90 | 6.32 | 127.39 | 3.1% | 8.0% |
+| pd3 | 500k x 1 | 11.19 | 18.48 | 1575.42 | 0.71% | 1.9% |
+| pd3 | 500k x 10 | 14.57 | 24.28 | 1665.44 | 0.87% | 2.3% |
+
+  Updated range, for frames of 100k rows or more: `reset_index` is **0.7 to 8.2%** of one `items()` pass (earlier: 0.49 to 4.7%), and `reset_index` + `set_index` is **1.9 to 18%** (earlier: 1.6 to 8.8%). The qualitative conclusion does not change: the copy is small compared with the iteration, and on pd3 it does not grow with n_cols.
+  - The pd2+CoW configuration was not re-run.

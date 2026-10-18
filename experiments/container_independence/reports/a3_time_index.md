@@ -478,3 +478,43 @@ time index is a shipping, production pattern.
 | fh call profile | `… $EXP_PY …/a3_fh_call_profile.py` | `results/a3_fh_call_profile_pd2.txt` |
 | time share | `… $EXP_PY …/a3_naive_time_share.py --grid dev` | `results/a3_naive_time_share_dev_pd2.{json,txt}` |
 | prior art | `$A3_PY -I experiments/container_independence/scripts/a3_prior_art_monthend.py` (private venv) | `results/a3_prior_art_monthend.json` |
+
+---------------------------------------------------------------------------------
+
+## 12. Cloud re-run (4-core machine, ~2 concurrent agents, 2026-10-18)
+
+Re-ran two headline scripts (pandas 2.3.3 env):
+
+* `PYTHONPATH=.:experiments/container_independence $EXP_PY -W ignore experiments/container_independence/scripts/a3_timeindex_check.py`
+  (10.6 s): **unchanged** — pandas/polars/numpy `add_steps` 0/3,600 mismatches on all 23
+  cases (numpy NA for tz), steps_between round trip 0, CustomBusinessDay: sktime vs
+  holiday-aware truth 1,095/3,600 (fh freq string `'C'`), polars/numpy vs truth 0;
+  `infer_step` agrees with `pd.infer_freq` 22/22.
+* `PYTHONPATH=.:experiments/container_independence $EXP_PY -W ignore experiments/container_independence/scripts/a3_time_engine_cost.py --grid dev --profile-max-series 0`
+  (4 min). P1=P2=P3 equality True in all 16 configs. Absolute times are lower than in the
+  loaded local run, so the per-instance figures change materially:
+
+| freq | ends | N | T | U | P1 ms | P2 ms | P3 ms | P4 ms | P2/P1 | P4/P1 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| MS | aligned | 1000 | 100 | 1 | 6.61 | 5.47 | 7.38 | 1,079 | 0.8 | 163 |
+| MS | ragged | 1000 | 100 | 50 | 4.83 | 5.89 | 50.96 | 1,038 | 1.2 | 215 |
+| MS | aligned | 10000 | 50 | 1 | 26.51 | 17.44 | 20.90 | 12,077 | 0.7 | 456 |
+| MS | ragged | 10000 | 50 | 25 | 23.20 | 15.01 | 41.25 | 11,288 | 0.6 | 487 |
+| D | aligned | 1000 | 100 | 1 | 4.31 | 5.67 | 7.34 | 1,390 | 1.3 | 322 |
+| D | ragged | 1000 | 100 | 50 | 4.75 | 6.68 | 74.60 | 1,398 | 1.4 | 294 |
+| D | aligned | 10000 | 50 | 1 | 15.21 | 15.52 | 16.98 | 12,971 | 1.0 | 853 |
+| D | ragged | 10000 | 50 | 25 | 12.14 | 11.95 | 47.46 | 13,340 | 1.0 | 1,099 |
+
+(Smaller grid points: P2/P1 1.5–2.5, P4/P1 4.9–69.)
+
+Updated headline numbers (supersede §0.4 / §7 where they differ):
+* Hybrid P2 costs **0.6×–2.5×** pure polars over the whole grid; at 10k series P2 is
+  12–17 ms vs P1 12–27 ms.
+* Current per-instance pattern P4 costs **~1.0–1.4 ms per instance** (was 1.7–3.8 ms),
+  i.e. **11–13 s for 10k series, 456×–1,099× pure polars** (was 20–36 s, 525×–1,535×).
+* P3 (exact sktime fh per unique cutoff) ≈ 0.8–1.4 ms per unique cutoff.
+The qualitative conclusion is unchanged: where the time axis is computed (once per panel
+vs once per instance) dominates; which library computes it does not.
+`a3_naive_time_share.py` (§7.1, ~17–27% / ~9 ms per instance) was not re-run; those
+numbers are from the earlier loaded local run, where per-call costs were ~2× higher, so
+the per-instance ms is likely lower here (unmeasured).

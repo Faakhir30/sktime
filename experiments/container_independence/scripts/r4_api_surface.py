@@ -28,7 +28,7 @@ FILES = [
     "sktime/datatypes/_vectorize.py",
     "sktime/forecasting/base/_base.py",
     "sktime/forecasting/base/_fh.py",
-    "sktime/forecasting/naive.py",
+    "sktime/forecasting/naive/_naive.py",
 ]
 
 GENERIC = set(dir(dict)) | set(dir(list)) | set(dir(str)) | set(dir(set)) | {

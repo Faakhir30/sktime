@@ -399,3 +399,46 @@ Chronos internals were read only briefly; that row is based on imports and signa
 - [utilsforecast releases](https://github.com/Nixtla/utilsforecast/releases); [utilsforecast PR #195](https://github.com/Nixtla/utilsforecast/pull/195).
 - [statsforecast polars guide](https://nixtlaverse.nixtla.io/statsforecast/docs/getting-started/getting_started_complete_polars.html).
 - [functime repo](https://github.com/functime-org/functime); [aeon v1.0 changelog](https://www.aeon-toolkit.org/en/stable/changelogs/v1.0.html); [narwhals README (Used by)](https://github.com/narwhals-dev/narwhals); [pytimetk PyPI](https://pypi.org/project/pytimetk/); [temporian user guide](https://temporian.readthedocs.io/en/stable/user_guide/).
+
+---
+
+## 8. Cloud re-run (2026-10-18; 4 cores, about 2 concurrent agents)
+
+The private venvs were not carried over. I rebuilt `venvs/r3` (utilsforecast 0.2.17, statsforecast 2.1.1, pandas 2.3.3, polars 2.0.0) and re-ran two scripts. E2–E7 were **not** re-run, so the numbers in sections 2–4 for darts, functime/E3, fugue/E4, lazy/E5 and losses/E6 are still from the earlier local run.
+
+```
+PYTHONPATH=experiments/container_independence $SP/venvs/r3/bin/python -W ignore experiments/container_independence/scripts/r3_nixtla_boundary.py --grid dev
+PYTHONPATH=.:experiments/container_independence $SP/expenv/bin/python -W ignore experiments/container_independence/scripts/r3_ts_libs_verify0_iter.py --grid dev
+```
+
+**E1 (`results/r3_nixtla_boundary_dev.json`)** at 10k series × 50 points:
+
+| method | time | relative to indptr |
+|---|---|---|
+| indptr iteration | 3.5 ms | 1× |
+| pandas `groupby(level=0)` | 370 ms | **106×** (earlier run: 96×) |
+| + `droplevel` | 1,045 ms | **300×** (earlier run: 260×) |
+| polars `partition_by` | 40 ms | **11.5×** (earlier run: 7.9×) |
+
+Other E1 results:
+
+- statsforecast going through pandas (polars → pandas → forecast → polars) relative to native polars: **1.24× at 10k, 1.43× at 1k, 1.77× at 100, 1.60× at 10 series**. The earlier run gave 1.37–1.80×. The 10k lower bound is now 1.24×.
+- `process_df`, pandas time over polars time: 1.23–1.62×.
+- Output types are unchanged: pandas → pandas, polars → polars. polars-lazy fails with `NotImplementedError` and pyarrow with `SchemaError large_string`.
+
+**verify0_iter (`results/r3_ts_libs_verify0_iter_dev.json`)** runs inside sktime, with every variant interleaved in one process. At 10k × 50:
+
+| variant | time | relative to hub iteration alone |
+|---|---|---|
+| hub iteration only | 3.7 ms | 1× |
+| build hub from pandas MultiIndex codes, then iterate | 6.4 ms | 1.75× |
+| build hub from polars, then iterate | 7.2 ms | 1.95× |
+| pandas `groupby(level=0)` | 380 ms | 104× |
+| + `droplevel` | 1,090 ms | 298× |
+| real sktime `VectorizedDF.items()` | 1,147 ms | **313×**; 179× against build-from-pandas-codes + iterate |
+| sktime `prepare_VectorizedDF` on polars_panel | 1,528 ms | |
+| iterate the hub but rebuild a freq-carrying pandas DataFrame per series | 2,574 ms | **2.2× slower than the current `VectorizedDF.items()`** (0.45 ratio) |
+
+**Consequence of the last row.** The hub's iteration advantage exists only for forecasters that consume numpy directly. If an unchanged pandas-inner forecaster still needs a per-series pandas DataFrame rebuilt from the hub, the hub path is about 2.2× slower than today's groupby. This supports recommendation (b), an opt-in container-free inner mtype, and argues against putting a hub under unchanged pandas forecasters.
+
+Conclusions in sections 0–5 stand. The via-pandas penalty range is updated to **1.24–1.77×**.

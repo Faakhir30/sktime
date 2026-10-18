@@ -7,6 +7,10 @@ Used by the x5 probe / test / benchmark scripts only.
 import pandas as pd
 
 BACKENDS = ["pandas", "polars", "polars_lazy", "pyarrow", "dask", "duckdb", "ibis"]
+try:  # ibis is not installed in the pandas-3 env
+    import ibis  # noqa: F401
+except ImportError:
+    BACKENDS.remove("ibis")
 LAZY_BACKENDS = {"polars_lazy", "dask", "duckdb", "ibis"}
 
 

@@ -527,3 +527,32 @@ Timing used `common.bench` (min of repeats, after warmup). All comparisons are i
 - scikit-lego: `sklego/meta/grouped_predictor.py` and `_grouped_utils.py` at `f329086cb176a03a4e7c78055d7f6ea906987d1c`; issue #658
 - fairlearn: #1440, #1522, #1552. great-tables: #737. marimo: #9082. pointblank: #39, #428. altair: #3921
 - sktime: #5370, #5423, #6091, #9680, PR #10802
+
+## 10. Cloud re-run (2026-10-18, 4-core machine, ~2 concurrent agents)
+
+Commands are the same as in §7. Both envs were re-run with `--grid dev`, taking about 56 s each, with peak RSS ≤ 400 MB. The JSON files in `results/r2_narwhals_probe_pd{2,3}_dev.json` were regenerated.
+
+**Qualitative results are unchanged in both envs:**
+
+- Sections A, B, C and D: collect defaults, the lazy-unsupported ops, and index preservation and reset.
+- Value-column sharing after `reset_index`: pd2 False, pd3 True.
+- Window `over` matrix: pandas 8/8, polars 7/8 (ewm null), duckdb 7/8, ibis 6/8, pyarrow 1/8, dask 1/8.
+- Polars group order: 20 distinct orders in 20 runs. pandas and pyarrow: 1.
+
+**Numbers.** Ratios stay within or near the earlier ranges. Absolute per-call overhead is about 2× lower because the machine is less loaded.
+
+| metric | earlier run | cloud re-run pd2 | cloud re-run pd3 |
+|---|---|---|---|
+| `from_native` only (pd / pl) µs | 18–36 | 18.0 / 10.3 | 20.0 / 11.3 |
+| pd `item(-1)` vs `iloc[-1]` | 8.5–9.9× | 9.3× (22.8 vs 2.5 µs) | 9.2× |
+| pd `with_columns(shift).to_native` vs `shift` | 12–22× (0.48–1.16 ms) | 11.3× (0.22 ms) | 17.1× (0.45 ms) |
+| pl Series mean | 68–75× | 80× (12.3 vs 0.15 µs) | 56× |
+| pl df `with_columns(shift)` | 2.9–3.4× | 2.0× | 1.8× |
+| `reset_index` / groupby-level iteration (10→10k series) | 0.06–0.76 (pd2), 0.03–0.99 (pd3) | 0.78 → 0.09 | 0.97 → 0.05 |
+| nw[pandas] iteration vs current | 1.1–1.3 (pd2), 1.0–3.1 (pd3) | 0.96–1.25 | 0.91–2.98 |
+| nw[polars] iteration vs current | 1.4–2.4 (pd2), 0.75–1.75 (pd3) | 1.40–2.26 | 0.81–2.27 |
+| polars `partition_by(as_dict)` vs current | 0.66–1.17 | 0.84 (10 series) | 0.49–1.24 |
+| nw[pyarrow] iteration at 1000 series | 20–29× | 19.9× | 27.5× |
+| `import narwhals` overhead | 0.14–0.27 s (loaded) | 0.077 s (probe G) | n/a |
+
+**Updated interpretation.** Fixed narwhals overhead per simple call is about **10–35 µs**. A pandas `with_columns` round trip costs about **0.2–0.45 ms**. Conclusions in §3.3 and §6 are unchanged.

@@ -254,7 +254,14 @@ class NwVectorizedDF:
             )
         )
         ik = self.instance_keys(frame)
-        g = ik.join(g, on=k, how="left")
+        # pyarrow hash joins do not guarantee left row order -> re-sort by an
+        # explicit ordinal (see scripts/x5_pa_over_bug.py)
+        g = (
+            ik.with_row_index("__x5_o__")
+            .join(g, on=k, how="left")
+            .sort("__x5_o__")
+            .drop("__x5_o__")
+        )
         start = g["__start"].to_numpy()
         stop = g["__stop"].to_numpy()
         length = g["__len"].to_numpy()

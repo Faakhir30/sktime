@@ -448,3 +448,24 @@ Protocol surface ("yes" = attribute present):
   - `results/r1_pandas_free_{nopandas,exp,skrubvenv}.json`;
   - `results/r1_dispatch_overhead_{exp,skrubvenv}_dev.{json,txt}`;
   - `results/r1_set_output_ext_dev.{json,txt}`.
+
+## Cloud re-run (2026-10-18, 4-core machine, ~2 concurrent agents)
+
+Re-ran `r1_sklearn_census.py`, `r1_set_output_ext.py`, `r1_dispatch_overhead.py` (EXP_PY, `--grid dev`).
+
+- **Census: identical.** 210 estimators / 209 instantiated / 19 `array_api_support` / 78 set_output; 12 static literals; 38 files / 235 `get_namespace` sites; narwhals in 3 files / 20 call sites.
+- **pyarrow adapter: identical.** 24 LOC; 10/10 ok; `polars.to_numpy()` is F-ordered.
+- **StandardScaler boundary tax** (ratio vs numpy C → default):
+  - numpy → polars egress: x1.29 (10k), x1.24 (100k), x1.18 (500k). That is +18–29%, vs +8–52% before.
+  - polars input: x0.61–0.77 (100k), x0.44–0.65 (500k).
+  - F-ordered numpy: x0.42–0.65.
+  - Conclusion unchanged: layout (F order) explains the polars-input speedup.
+  - Absolute: numpy → default took 12.6 ms (100k) and 64.7 ms (500k).
+- **Dispatch overhead.** Absolute numbers are ~2× faster than the earlier run; the ratios hold.
+  - narwhals `from_native`: 10.7–11.1 µs (polars), 17.0–17.8 µs (pandas), vs 22–40 µs earlier.
+  - narwhals n_rows: x100–102 vs native.
+  - dict-dispatch: x2.2–2.7 (+0.2 µs); singledispatch: x2.6–3.4 (+0.3 µs).
+  - pre-wrapped `.shape[0]`: 0.25 / 0.38 µs.
+  - sktime `check_is_mtype`: 12.7 µs (polars), 36.4 µs (pandas).
+  - `check_array` to_numpy: x3.9 (polars), x10.0 (pandas).
+  - **Revised estimate:** wrapping per instance over 10k instances now costs ~0.11–0.17 s per op (vs 0.22–0.47 s earlier). Conclusion unchanged: wrap once per batch.

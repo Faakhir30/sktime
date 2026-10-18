@@ -45,6 +45,24 @@ def _over(expr, keys):
     return expr.over(*keys) if keys else expr
 
 
+def _group_broadcast(f, keys, exprs):
+    """Add per-group aggregates ``exprs`` (aliased) as columns, broadcast to rows.
+
+    polars / duckdb / dask / pandas / ibis: ``expr.over(*keys)`` (a window).
+    pyarrow: narwhals 2.27.1 implements ``over`` as group_by + ``pa.Table.join``
+    and returns the joined COLUMN, but the pyarrow hash join does not keep the
+    left row order -> values land on the wrong rows, silently (see
+    scripts/x5_pa_over_bug.py). Workaround: join the aggregate table back as
+    whole ROWS (row order may change, row content stays aligned).
+    """
+    if not keys:
+        return f.with_columns(exprs)
+    if f.implementation.is_pyarrow():
+        agg = f.group_by(*keys).agg(exprs)
+        return f.join(agg, on=keys, how="left")
+    return f.with_columns([e.over(*keys) for e in exprs])
+
+
 def freq_to_step(freq):
     """Pandas-style freq -> ("int", n) | ("td", timedelta) | ("cal", unit, n)."""
     import pandas as pd
@@ -57,6 +75,10 @@ def freq_to_step(freq):
     if isinstance(off, pd.offsets.Tick):
         return ("td", pd.Timedelta(off).to_pytimedelta())
     n = off.n
+    # pandas 3: Day is a calendar offset, no longer a Tick (DST-aware). For
+    # tz-naive timestamps it is still exactly 24h.
+    if isinstance(off, pd.offsets.Day):
+        return ("td", timedelta(days=n))
     # month/quarter/year END anchors: shift to the 1st of next month, offset,
     # shift back (offset_by alone maps Feb-28 + 1mo -> Mar-28, not Mar-31)
     if isinstance(off, pd.offsets.MonthEnd):
@@ -145,9 +167,8 @@ class NwPanelNaive:
         """Add __r (1 = last obs per series), __cut (cutoff per series)."""
         keys, t = self.keys_, self.time_
         f = f.with_row_index(RI, order_by=[*keys, t])
-        f = f.with_columns(
-            _over(nw.col(RI).max(), keys).alias(RMAX),
-            _over(nw.col(t).max(), keys).alias(CUT),
+        f = _group_broadcast(
+            f, keys, [nw.col(RI).max().alias(RMAX), nw.col(t).max().alias(CUT)]
         )
         f = f.with_columns((nw.col(RMAX) - nw.col(RI) + 1).alias(R))
         # NaN -> null so that "missing" means one thing on every backend
@@ -179,8 +200,8 @@ class NwPanelNaive:
                     for v in vcols
                 ]
             )
-            f = f.with_columns(
-                [nw.col(f"__rv_{v}").min().over(*part).alias(f"__rm_{v}") for v in vcols]
+            f = _group_broadcast(
+                f, part, [nw.col(f"__rv_{v}").min().alias(f"__rm_{v}") for v in vcols]
             )
             f = f.with_columns(
                 [
@@ -201,7 +222,7 @@ class NwPanelNaive:
             )
 
         if strat == "drift":
-            f = f.with_columns(_over(nw.col(R).max(), keys).alias(N))
+            f = _group_broadcast(f, keys, [nw.col(R).max().alias(N)])
             f = f.with_columns(
                 *[
                     nw.when(nw.col(R) == nw.col(N)).then(nw.col(v)).otherwise(None).alias(

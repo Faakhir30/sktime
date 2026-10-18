@@ -499,3 +499,69 @@ operations, not loop + concat.
   *unmeasured*.
 * ibis `create_table(..., overwrite=True)` raised a DuckDB `ParserException` with ibis 12 +
   duckdb 1.5.6. The scripts use fresh table names instead.
+
+## Cloud re-run (2026-10-18, 4-core cloud machine, pd2 env only)
+
+Commands, run from the WT root with `SP=<session scratchpad>`:
+```
+X1_TMP=$SP/x1tmp PYTHONPATH=.:$ED $EXP_PY -W ignore $ED/scripts/x1_matrix.py --tag pd2
+PYTHONPATH=.:$ED $EXP_PY -W ignore $ED/scripts/x1_fallback.py --grid dev --tag pd2
+X1_TMP=$SP/x1tmp PYTHONPATH=.:$ED $EXP_PY -W ignore $ED/scripts/x1_stay_lazy.py --grid dev
+```
+These regenerated `results/x1_matrix_pd2.json`, `results/x1_fallback_dev_pd2.json` and
+`results/x1_stay_lazy_dev_pd2.json`. The fidelity, concat and pd3 runs were *not* re-run, so
+F1, F5 and the pd3 tables still come from the earlier local run.
+
+**Unchanged.** These results reproduced exactly:
+* Table A/B: the collect defaults and the accepted/rejected backends.
+* Matrix C: the same failing ops per backend. Coverage is still polars_lazy 34/34, duckdb 32/34,
+  ibis 31/34, duckdb_owncon 28/34 and dask 24/34 (dask has 9 op errors, plus the COLLECT-ERR on
+  the filter-over formulation).
+* Table D.
+* Round-trip type fidelity: dask npartitions 8 -> 8 with `rt_manual` but 8 -> 1 with `rt_nw`;
+  the DuckDB `rt_nw` relation can't be joined with the user's connection; ibis gives an unbound
+  memtable.
+
+**Changed numbers. Use these as the current values.**
+
+F2/F3 (fallback, 500k rows, ratio to `native_collect`):
+
+| backend | collect('pandas') | rt_manual | rt_nw |
+|---|---|---|---|
+| polars | x29.9 (was x58.5) | x0.96 | x1.46 |
+| dask | x0.91 | x1.92 (was x1.81) | x1.87 |
+| duckdb | x4.04 (was x7.14), 47.6 MB peak | x0.95 | x1.08 |
+| ibis | x4.13 (was x7.64), 55.2 MB peak | x0.82 | x0.98 |
+
+At 100k rows, `rt_manual` was x0.99–1.41 and collect('pandas') was x1.06–10.6. So the relift costs
+**0.82–1.92x a native collect**, and collect('pandas') costs **4.0–30x** a native collect at 500k
+rows for polars, DuckDB and ibis.
+
+F4 (stay lazy vs R1 collect-all, 500k rows = 10000x50). Each cell is the speedup vs R1, and peak
+RSS deltas are R1 -> route:
+
+| backend | R2 stay lazy | R2b last(order_by) | R0 pandas | R_native | peak R1 -> R2b |
+|---|---|---|---|---|---|
+| polars | x1.13 | x1.23 | x0.41 | x1.65 | 77.4 -> 12.5 MB (6.2x) |
+| duckdb | x1.51 | x3.04 | x0.37 | x2.06 | 43.3 -> 0.3 MB |
+| ibis | x2.48 | x2.80 | x0.48 | x3.27 | 47.1 -> 1.2 MB |
+| dask | x0.38 | ERR | x1.07 | x0.53 | n/a |
+
+At 100k rows: polars R2 was x0.90 and R2b x1.92; duckdb x1.42 and x1.95; ibis x1.23 and x1.74;
+dask R2 x0.19. At ≤10k rows, R2 was 0.54–0.74x for polars, DuckDB and ibis, and 0.10–0.11x for
+dask.
+
+R3, the per-key filter+collect loop at 1000 groups:
+* polars 2.82 ms/group (2.82 s total), vs R1 16.2 ms: **~174x** slower
+* duckdb 3.39 ms/group, vs R1 19.9 ms: **~170x**
+* ibis 4.65 ms/group, vs R1 25.2 ms: **~184x**
+* dask 21.6 ms/group, vs R1 39.8 ms: **~543x**
+
+Revised headline ranges (these replace the TL;DR numbers):
+* At 500k rows, the portable lazy plan R2 is **1.1–2.5x** faster than collect-all, and R2b is
+  **1.2–3.0x** faster. Peak memory with R2b is **6x (polars) to >35x (DuckDB, ibis)** lower.
+* Today's pandas route R0 is **2.1–2.7x** slower than R1 at 500k rows for polars, DuckDB and ibis.
+* The polars win is smaller here than in the local run (R2b went from x2.11 to x1.23). The
+  direction is the same.
+* Dask staying lazy is still slower at every dev size: **0.1–0.38x**.
+* Peak process RSS in the fallback run was 541 MB.

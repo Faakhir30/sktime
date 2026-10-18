@@ -82,6 +82,8 @@ ALLOWED["numpylike"] = ALLOWED["strict"] | {
     "notnull", "astype", "any", "all", "median", "quantile", "T", "tolist",
     "to_list", "item", "squeeze", "flatten", "reshape",
 }
+# numpylike + elementwise power (VAR/VARMAX/VECM hit .pow first in numpylike)
+ALLOWED["numpylike_pow"] = ALLOWED["numpylike"] | {"pow"}
 
 
 def _skip(fn):
@@ -406,7 +408,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=90)
     ap.add_argument("--grid", default="dev", choices=["dev", "large"])  # unused
     ap.add_argument("--list-runnable", action="store_true")
-    ap.add_argument("--mode", default="record", choices=["record", "strict", "numpylike"])
+    ap.add_argument("--mode", default="record", choices=["record", "strict", "numpylike", "numpylike_pow"])
     args = ap.parse_args()
 
     from sktime.registry import all_estimators
